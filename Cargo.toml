@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.65"
+http = "0.2.8"
+httparse = "1.8.0"
+threadpool = "1.8.1"

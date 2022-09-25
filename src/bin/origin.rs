@@ -9,7 +9,6 @@ use std::{
 struct RequestLine {
     method: Option<String>,
     path: Option<String>,
-    protocol: Option<String>,
 }
 impl RequestLine {
     fn method(&self) -> String {
@@ -26,10 +25,8 @@ impl RequestLine {
             String::from("")
         }
     }
-    // get item number
     fn get_resource_id(&self) -> String {
         let path = self.path();
-        println!("path: {path}");
         let path_tokens: Vec<String> = path.split("/").map(|line| line.parse().unwrap()).collect();
         path_tokens[path_tokens.len() - 1].clone()
     }
@@ -46,16 +43,8 @@ impl FromStr for RequestLine {
             Some(token) => Some(String::from(token)),
             None => None,
         };
-        let protocol = match msg_tokens.next() {
-            Some(token) => Some(String::from(token)),
-            None => None,
-        };
 
-        Ok(Self {
-            method: method,
-            path: path,
-            protocol: protocol,
-        })
+        Ok(Self { method, path })
     }
 }
 
@@ -71,7 +60,6 @@ fn main() {
 
     // check listener for incoming connections/http requests
     for connection in listener.incoming() {
-        // connection == stream
         let mut connection = connection.unwrap();
 
         // init the buffer
@@ -82,7 +70,6 @@ fn main() {
 
         // request lines
         let req_line = "";
-        // str_request_line == string_request_line
         let str_request_line = if let Some(line) = str::from_utf8(&buffer).unwrap().lines().next() {
             line
         } else {
@@ -98,21 +85,12 @@ fn main() {
 
         println!("res to send: {:?}", html_res_str);
 
-        // connection == stream
-        // TODO: handle potential writing issues
         connection.write(html_res_str.as_bytes()).unwrap();
-
-        // let connection = match connection_result {
-        //     Ok(connection) => thread::spawn(move || handle_connection(connection)),
-        //     _ => (),
-        // };
     }
-    // println!("Listening on port {ORIG_PORT}:  ${connection:?}");
 }
 
 fn build_response(req_line: RequestLine) -> String {
     let html_res_str: String;
-    // status == order_status
     let status: String;
 
     println!("len is {}", req_line.get_resource_id().len());
@@ -123,10 +101,8 @@ fn build_response(req_line: RequestLine) -> String {
         || cond_invalid_resource;
     if cond_invalid_req {
         if cond_invalid_resource {
-            // status == order_status
             status = format!("Invalid resource id");
         } else {
-            // status == order_status
             status = format!("Not found");
         }
         html_res_str = format!(
@@ -137,11 +113,9 @@ fn build_response(req_line: RequestLine) -> String {
             status
         );
     } else {
-        // status == order_status
-        // get_resource_id == get_order_number
         status = format!(
-            "{} {} is: Shipped\n",
-            "Status for Item #",
+            "{} {}: Exists\n",
+            "Status for item #",
             req_line.get_resource_id()
         );
 
@@ -155,14 +129,3 @@ fn build_response(req_line: RequestLine) -> String {
     }
     html_res_str
 }
-
-// init connection
-// match listener.accept() {
-//     // Ok((sock, _)) => println!("matched: {sock:?}"),
-//     Ok((sock, _)) => handle_connection(sock),
-//     Err(e) => panic!("Error match: {}", e),
-// }
-// println!("endddd1");
-// let connection = listener.accept();
-// .map_err(|error| println!("{error:?}"))
-// .unwrap_err();
