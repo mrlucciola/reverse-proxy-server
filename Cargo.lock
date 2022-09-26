@@ -69,12 +69,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde"
+version = "1.0.145"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "728eb6351430bccb993660dfffc5a72f91ccc1295abaa8ce19b27ebe4f75568b"
+
+[[package]]
 name = "tcp_proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "http",
  "httparse",
+ "serde",
  "threadpool",
 ]
 

@@ -1,3 +1,5 @@
+pub mod http;
+use crate::http::request::parse_request;
 use std::{
     env,
     io::{Read, Write},
@@ -5,6 +7,7 @@ use std::{
     process::exit,
     thread::{self, JoinHandle},
 };
+// mod cache;
 
 fn new_endpoint_str(addr: &str, port: u16) -> String {
     let addr_parsed = IpAddr::V4(addr.parse::<Ipv4Addr>().unwrap());
@@ -14,36 +17,18 @@ fn new_endpoint_str(addr: &str, port: u16) -> String {
 }
 
 fn main() {
-    let proxy_endpoint_orig = new_endpoint_str("127.0.0.1", 8080);
-    let origin_endpoint_orig = new_endpoint_str("127.0.0.1", 8081);
-
-    // command line args
-    let args: Vec<_> = env::args().collect();
-
-    // use the inputs
-    let proxy_endpoint_input = if args.len() == 3 {
-        &args[1]
-    } else {
-        &proxy_endpoint_orig
-    };
-    let origin_endpoint_input = if args.len() == 3 {
-        &args[2]
-    } else {
-        &origin_endpoint_orig
-    };
-    let proxy_endpoint_input = proxy_endpoint_input
-        .parse::<SocketAddr>()
-        .expect("Improper IpAddr format");
+    let origin_endpoint = &new_endpoint_str("127.0.0.1", 8080);
+    let proxy_endpoint = new_endpoint_str("127.0.0.1", 8081);
 
     // start the socket server at `proxy endpoint`
     let proxy_listener: TcpListener;
-    if let Ok(proxy) = TcpListener::bind(proxy_endpoint_input) {
+    if let Ok(proxy) = TcpListener::bind(proxy_endpoint) {
         proxy_listener = proxy;
         let port = proxy_listener.local_addr().unwrap().port();
         let addr = proxy_listener.local_addr().unwrap().ip();
 
         // handle error if no origin
-        if let Err(_err) = TcpStream::connect(origin_endpoint_input) {
+        if let Err(_err) = TcpStream::connect(origin_endpoint) {
             println!("Error: Please re-start the origin server");
             exit(1);
         }
@@ -55,8 +40,7 @@ fn main() {
             let mut proxy_connection = proxy_stream.expect("Connection error");
 
             // establish new tcp connection to origin
-            // origin_connection == origin_stream
-            let mut origin_connection = TcpStream::connect(origin_endpoint_input)
+            let mut origin_connection = TcpStream::connect(origin_endpoint)
                 .expect("Error with origin server, please re-connect");
 
             // spawn a new thread
@@ -91,6 +75,8 @@ fn handle_connection(proxy_connection: &mut TcpStream, origin_connection: &mut T
             String::from_utf8_lossy(&in_buffer)
         );
     }
+    // serde::Deserialize::deserialize(deserializer);
+    println!("in_buffer: {:?}", String::from_utf8_lossy(&in_buffer));
 
     // 2) write to origin
     let _orig_fwd = origin_connection
