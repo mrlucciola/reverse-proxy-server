@@ -1,9 +1,9 @@
-use super::http::response;
-use super::{handler, utils};
+// use super::http::response;
+// use super::{handler, utils};
 use http::{Request, Response};
-use httparse;
+// use httparse;
 use std::{
-    fs::{copy, create_dir_all, read, File},
+    fs::{create_dir_all, read, File},
     io::prelude::*,
     path::Path,
     sync::{Arc, Mutex},
@@ -36,32 +36,32 @@ impl HTTPCache {
 
         let filepath = self.get_filepath_from_request(req);
         if let Ok(res_bytes) = read(&filepath) {
-            if let Ok(Some((res, _))) = response::parse_response(&res_bytes) {
-                return Some(res);
-            }
-            log::error!("Failed to parse response from cache file {}", &filepath);
+            // if let Ok(Some((res, _))) = response::parse_response(&res_bytes) {
+            //     return Some(res);
+            // }
+            eprintln!("Failed to parse response from cache file {}", &filepath);
             return None;
         }
-        log::error!("Failed to read response from cache file {}", &filepath);
+        eprintln!("Failed to read response from cache file {}", &filepath);
         return None;
     }
 
-    pub fn add_entry(&self, req: &Request<Vec<u8>>, res: &Response<Vec<u8>>) {
+    pub fn add_entry(&self, req: &Request<Vec<u8>>, _res: &Response<Vec<u8>>) {
         let filepath = Self::get_filepath_from_request(&self, req);
-        let res_bytes = utils::response_to_bytes(res);
+        let res_bytes = [0u8; 1000]; //utils::response_to_bytes(res);
 
         if let Ok(mut file_buf) = File::create(&filepath) {
             match file_buf.write_all(&res_bytes) {
-                Ok(_) => log::info!("Wrote file {} to cache.", &filepath),
-                Err(e) => log::error!("Failed to write response to cache file: {}", e),
+                Ok(_) => println!("Wrote file {} to cache.", &filepath),
+                Err(e) => eprintln!("Failed to write response to cache file: {}", e),
             }
         } else {
-            log::error!("Failed to create new cache file!");
+            eprintln!("Failed to create new cache file!");
         }
     }
 
-    fn get_filepath_from_request(&self, req: &Request<Vec<u8>>) -> String {
-        let hashcode = utils::get_hashcode(req);
+    fn get_filepath_from_request(&self, _req: &Request<Vec<u8>>) -> String {
+        let hashcode = ""; //utils::get_hashcode(req);
         format!("{}/{}", self.dir_path, hashcode)
     }
 }
