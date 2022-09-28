@@ -1,54 +1,78 @@
 // libs
 use std::{
-    io,
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     process::exit,
+    sync::{Arc, RwLock},
     thread::{self, JoinHandle},
 };
 // local
+pub mod cache_utils;
 pub mod http_utils;
-use http_utils::connection::{handle_connection, new_endpoint_str};
+pub use cache_utils::cache::{Cache, HTTPCache};
+pub use http_utils::{
+    connection::{handle_client_proxy_connection, new_endpoint_str},
+    errors::*,
+};
 
-fn handle_incoming_client_stream(
-    client_proxy_stream_res: Result<TcpStream, io::Error>,
-    origin_endpoint: String,
-) -> JoinHandle<()> {
-    let mut client_proxy_connection = client_proxy_stream_res.expect("Connection error");
+fn write_error_response_to_client(e: failure::Error) -> Result<()> {
+    eprintln!("WRITING ERROR RESPONSE TO CLIENT: \n_______\n{e}\n_______\n");
 
-    // spawn and return new thread
-    let new_thread = thread::spawn(move || {
-        if let Err(err) = handle_connection(&mut client_proxy_connection, &origin_endpoint) {
-            eprintln!("Error- Handling new client connection: {:?}", err);
-        };
-    });
-
-    // return the thread
-    new_thread
+    Ok(())
 }
 
 fn main() {
+    // 0.1) init proxy server/listener
     let origin_endpoint = new_endpoint_str("127.0.0.1", 8080);
     let proxy_endpoint = new_endpoint_str("127.0.0.1", 8081);
+    let proxy_listener = match TcpListener::bind(&proxy_endpoint) {
+        Ok(pl) => {
+            let port = pl.local_addr().unwrap().port();
+            let addr = pl.local_addr().unwrap().ip();
+            println!("Running at endpoint: {addr}:{port}");
 
-    // start the socket server at `proxy endpoint`
-    let proxy_listener_result = TcpListener::bind(proxy_endpoint);
-    if let Err(err) = proxy_listener_result {
-        eprintln!("Unable to bind to specified proxy port: {}", err);
-        exit(1);
-    }
+            pl
+        }
+        Err(e) => {
+            eprintln!("Unable to bind to specified proxy port: {}", e);
+            exit(1);
+        }
+    };
 
-    let proxy_listener = proxy_listener_result.unwrap();
-    let port = proxy_listener.local_addr().unwrap().port();
-    let addr = proxy_listener.local_addr().unwrap().ip();
+    // 0.2) init cache
+    let cache_arc_rw = HTTPCache::new();
 
-    println!("Running at endpoint: {addr}:{port}");
-
-    // check/handle threads for connections
+    // 0.3) init thread pool
     let mut thread_handles: Vec<JoinHandle<()>> = Vec::new();
-    for client_proxy_stream in proxy_listener.incoming() {
-        let handle = handle_incoming_client_stream(client_proxy_stream, origin_endpoint.clone());
 
-        // add to 'thread pool'
+    // 1) handle incoming connections
+    for client_proxy_stream_result in proxy_listener.incoming() {
+        let cache = cache_arc_rw.clone();
+        let origin_endpoint_clone = origin_endpoint.clone();
+
+        // TODO: Clean up nested match
+        let handle = match client_proxy_stream_result {
+            Ok(mut client_proxy_stream) => thread::spawn(move || {
+                // return handle, otherwise show error
+                if let Err(err) = handle_client_proxy_connection(
+                    &mut client_proxy_stream,
+                    origin_endpoint_clone,
+                    cache,
+                ) {
+                    eprintln!("Error while handling request: {:?}", err);
+                    // write the error http response to client, or log error
+                    if let Err(e) = write_error_response_to_client(err) {
+                        eprintln!("Error while writing to client: {:?}", e);
+                    };
+                };
+            }),
+            // if the client stream result returns error
+            Err(e) => {
+                eprintln!("Error: could not connect to client: {:?}", e);
+                continue;
+            }
+        };
+
+        // add handle to 'thread pool'
         thread_handles.push(handle);
         println!("\nend of connection loop\n");
     }
@@ -58,8 +82,3 @@ fn main() {
         handle.join().expect("Unable to join child thread");
     }
 }
-
-// const MAX_NUM_HEADERS: usize = 32;
-
-fn write_to_origin() {}
-/*  */

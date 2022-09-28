@@ -6,11 +6,8 @@ use std::{
     net::TcpStream,
 };
 // local
-pub use super::errors::{fmt_error, RequestError, Result};
+pub use super::{errors::{fmt_error, RequestError, Result}, constants::*};
 
-// constants
-// pub const MAX_NUM_HEADERS: usize = 32;
-pub const MAX_HEADERS_SIZE: usize = 2_usize.pow(10) * 8; // 1024 * 8 = 8192
 
 /// This function forwards the incoming request to the `origin`.
 ///
@@ -51,7 +48,7 @@ pub fn write_req_to_origin(
 
 pub fn get_parsed_request(stream: &mut TcpStream) -> Result<Request<Vec<u8>>> {
     // init request buffer
-    let mut in_buffer = [0_u8; MAX_HEADERS_SIZE];
+    let mut in_buffer = [0_u8; SIZE_MAX_HEADERS];
     let mut bytes_read = 0;
 
     loop {
@@ -68,10 +65,21 @@ pub fn get_parsed_request(stream: &mut TcpStream) -> Result<Request<Vec<u8>>> {
         bytes_read += new_bytes;
 
         // init header buffer
-        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut headers = [httparse::EMPTY_HEADER; AMT_MAX_HEADERS];
         let mut req = httparse::Request::new(&mut headers);
 
         if let Ok(parsed) = req.parse(&in_buffer) {
+            // 1.a) check request, proceed if GET requets
+            // TODO: handle error if no origin
+            // TODO: propagate error to client http response
+
+            if req.method.unwrap() != http::Method::GET {
+                return Err(failure::err_msg(format!(
+                    "Error::RequestMethod- please use GET.  Submitted: {}",
+                    req.method.unwrap()
+                )));
+            }
+
             // check if the request is incomplete (partial)
             // TODO: propagate error to client http response
             if parsed.is_partial() {

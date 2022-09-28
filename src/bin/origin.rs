@@ -6,8 +6,11 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 // local
+pub mod cache_utils;
 pub mod http_utils;
-use http_utils::connection::new_endpoint_str;
+
+use cache_utils::cache::HTTPCache;
+use http_utils::{connection::new_endpoint_str, constants::*};
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -83,8 +86,6 @@ fn write_res_to_proxy_stream_from_origin(
 }
 
 fn main() {
-    const ORIG_PORT: u16 = 8080;
-    const ORIG_ADDR: &str = "127.0.0.1";
     let origin_endpoint = new_endpoint_str(ORIG_ADDR, ORIG_PORT);
 
     // create listener
@@ -101,7 +102,7 @@ fn main() {
         ///////////////////////////////////////////////////
         // HANDLE INCOMING CONNECTION (request) FROM PROXY
         // init the buffer
-        let mut buffer = [0; 2_usize.pow(9)];
+        let mut buffer = [0; SIZE_MAX_HEADERS];
         let mut bytes_read = 0;
 
         loop {
@@ -117,7 +118,7 @@ fn main() {
             bytes_read += new_bytes;
 
             // init req headers
-            let mut headers = [httparse::EMPTY_HEADER; 64];
+            let mut headers = [httparse::EMPTY_HEADER; AMT_MAX_HEADERS];
             let mut req = httparse::Request::new(&mut headers);
 
             // read to buffer

@@ -48,6 +48,10 @@ pub enum ConnectionError {
     BodySizeTooLarge,
     /// No headers in map
     EmptyHeaderValue,
+    /// Error while parsing
+    ParseError(failure::Error),
+    /// Error while client and proxy connection open
+    ClientProxyStream,
 }
 
 pub fn fmt_error<T>(e: T, msg: &str) -> failure::Error
