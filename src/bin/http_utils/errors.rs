@@ -14,7 +14,7 @@ pub enum RequestError {
     /// The request body is bigger than MAX_BODY_SIZE
     RequestBodyTooLarge,
     /// Encountered an I/O error when reading/writing a TcpStream
-    ConnectionError(std::io::Error),
+    ConnectionError(failure::Error),
     /// Cannot handle certain method
     InvalidMethod,
     MiscError(ResponseError),

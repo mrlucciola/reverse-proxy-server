@@ -20,40 +20,35 @@ fn check_for_complete_request(res_status: httparse::Status<usize>) -> Option<usi
 }
 
 fn parse_res_from_origin(buffer: &[u8]) -> Result<Option<(http::Response<Vec<u8>>, usize)>> {
-    println!("3.0) start: parse_res_from_origin");
     // init headers
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut res_init = httparse::Response::new(&mut headers);
 
-    println!("3.1) parsing response");
     // parse the response into res_init, get status
+    // TODO: propagate error to client http response
     let res_status = res_init
         .parse(buffer)
         .or_else(|err| Err(fmt_error(ResponseError::MalformedResponse(err), "")))?;
 
-    println!("3.2) parsed: res_status = {res_status:?}");
     // if this is a complete request, build and return response
+    // TODO: propagate error to client http response
     let res_len = match check_for_complete_request(res_status) {
         Some(len) => len,
         None => return Err(failure::err_msg("Buffer overflow")),
     };
 
-    println!("3.3) res_len: {res_len}");
     // init the response builder
     let mut res = http::Response::builder()
         .status(res_init.code.unwrap())
         .version(http::Version::HTTP_11);
-    println!("3.4) res builder: {res:?}");
 
     // add headers to the response builder
     for header in res_init.headers {
         res = res.header(header.name, header.value);
     }
-    println!("3.5) headers: done");
 
     // init the response body
     let res: Response<Vec<u8>> = res.body(Vec::new()).unwrap();
-    println!("3.6) response body: built");
 
     Ok(Some((res, res_len)))
 }
@@ -65,8 +60,8 @@ pub fn read_res_from_origin(proxy_origin_stream: &mut TcpStream) -> Result<Respo
     let mut bytes_read = 0;
 
     loop {
-        println!("2b.1) reading new bytes - bytes read: {bytes_read}");
         // read incoming stream and write bytes into the buffer
+        // TODO: propagate error to client http response
         let new_bytes = proxy_origin_stream
             .read(&mut res_buffer[bytes_read..])
             .or_else(|err| {
@@ -76,35 +71,28 @@ pub fn read_res_from_origin(proxy_origin_stream: &mut TcpStream) -> Result<Respo
                 ))
             })?;
 
-        println!("2b.2) handle incomplete respoisen - new bytes: {new_bytes}");
         // handle incomplete response
         if new_bytes == 0 {
-            println!("2b.2.x) new bytes == 0 - {new_bytes}");
             break;
         }
+
         bytes_read += new_bytes;
-        println!("2b.3) bytes read = {}", &bytes_read);
     }
 
     // check for valid response
+    // TODO: propagate error to client http response
     let parsed_res_option = parse_res_from_origin(&res_buffer[..bytes_read])?;
-    println!("2b.4.a) parsed_res_option");
     if let None = parsed_res_option {
         return Err(failure::err_msg("Incomplete response - returned none"));
     }
-    println!("2b.4.b) parsed_res_option - no failure!");
 
     let (mut parsed_res, headers_len) = parsed_res_option.unwrap();
-    println!("2b.5) parsed_res: x  headers_len: {}", headers_len);
 
     // return the remainder of the response body (without the headers)
     parsed_res
         .body_mut()
         .extend_from_slice(&res_buffer[headers_len..bytes_read]);
 
-    println!("2b.6) parsed_res (after extending): \n{:?}", parsed_res);
-
-    println!("Success: response from origin = read");
     return Ok(parsed_res);
 }
 

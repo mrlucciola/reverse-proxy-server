@@ -64,11 +64,15 @@ pub fn handle_connection(
     client_proxy_connection: &mut TcpStream,
     origin_endpoint: &String,
 ) -> Result<()> {
+    ////////////////////////////////////////////
     // 1) parse http request
+
+    // TODO: propagate error to client http response
     let parsed_req = get_parsed_request(client_proxy_connection)?;
 
     // 1.a) check request, proceed if GET requets
     // TODO: handle error if no origin
+    // TODO: propagate error to client http response
     if parsed_req.method() != Method::GET {
         return Err(failure::err_msg(format!(
             "Error::RequestMethod- please use GET.  Submitted: {}",
@@ -76,6 +80,7 @@ pub fn handle_connection(
         )));
     }
 
+    ////////////////////////////////////////////
     // 2) Write to origin
 
     // 2.a) Open stream
@@ -86,7 +91,9 @@ pub fn handle_connection(
             exit(1);
         }
     };
+
     // 2.b) write to origin
+    // TODO: propagate error to client http response
     if let Err(err) = write_req_to_origin(&mut proxy_origin_stream, &parsed_req) {
         return Err(fmt_error(
             RequestError::ConnectionError(err),
@@ -106,6 +113,7 @@ pub fn handle_connection(
     }
 
     // 4) respond to client
+    // TODO: propagate error to client http response
     // TODO: log timestamps for client, proxy, & origin requests and responses
     write_response_to_client(client_proxy_connection, res_from_origin)?;
 

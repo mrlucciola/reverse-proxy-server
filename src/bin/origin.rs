@@ -55,48 +55,6 @@ fn call_api(url: String) -> Result<http::Response<Vec<u8>>> {
     Ok(new_res)
 }
 
-// fn build_res_to_proxy(
-//     http_status_code: u16,
-//     http_status_text: String,
-//     res_status_str: String,
-// ) -> String {
-//     let line1 = format!("HTTP/1.1 {http_status_code} {http_status_text}");
-//     let line2 = format!("Content-Type: text/html");
-//     let line3 = format!("Content-Length:{}", res_status_str.len());
-//     let line4 = format!("{res_status_str}");
-
-//     format!("{}\n{}\n{}\n\n{}", line1, line2, line3, line4)
-// }
-
-// fn handle_connection(
-//     proxy_origin_stream: &mut TcpStream,
-//     parsed_req: http::Request<Vec<u8>>,
-//     json: Vec<Payload>,
-// ) -> Result<()> {
-//     println!("\n\nin handle conn\n");
-//     let cond_invalid_method = parsed_req.method() != http::Method::GET;
-//     if cond_invalid_method {
-//         eprintln!("Please use GET request");
-//         let res_str = build_res_to_proxy(400, "Invalid".to_string(), "Invalid request".to_string());
-
-//         proxy_origin_stream.write(res_str.as_bytes())?;
-//         return Err(failure::err_msg("Please use GET request"));
-//     }
-//     println!("parsed_req: {:?}", parsed_req);
-//     let res_str = build_res_to_proxy(200, "OK".to_string(), "Successful".to_string());
-//     println!("res_str: {res_str}");
-
-//     println!("converting json to str...");
-//     let json_str = serde_json::to_string(&json)?;
-//     println!("json_str: \n{json_str}\n");
-//     // add json to the response body
-
-//     // write to the stream
-//     proxy_origin_stream.write(res_str.as_bytes())?;
-
-//     Ok(())
-// }
-
 fn write_res_to_proxy_stream_from_origin(
     proxy_origin_stream: &mut TcpStream,
     res: http::Response<Vec<u8>>,
@@ -144,16 +102,11 @@ fn main() {
         // HANDLE INCOMING CONNECTION (request) FROM PROXY
         // init the buffer
         let mut buffer = [0; 2_usize.pow(9)];
-
-        // read to the buffer
-        // proxy_origin_stream.read(&mut buffer).unwrap();
-
-        // let parsed_req_result = get_parsed_request(&mut proxy_origin_stream);
-        // let mut in_buffer = [0_u8; MAX_HEADERS_SIZE];
         let mut bytes_read = 0;
 
         loop {
             // check for new bytes
+            // TODO: propagate error + code to http response
             let new_bytes = match proxy_origin_stream.read(&mut buffer[bytes_read..]) {
                 Ok(nb) => nb,
                 Err(err) => {
@@ -167,7 +120,8 @@ fn main() {
             let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
 
-            println!("After init request object");
+            // read to buffer
+            // TODO: propagate error + code to http response
             let parsed = match req.parse(&buffer) {
                 Ok(p) => p,
                 Err(err) => {
@@ -175,19 +129,20 @@ fn main() {
                     continue;
                 }
             };
-            println!("After parse check");
+
             // check if the request is incomplete (partial)
             if parsed.is_partial() {
                 eprintln!("{}", failure::format_err!("Warning: Partial request"));
             };
-            println!("After partial check");
-            // build proper `request` body
+
+            /////////////////////////////////////////
+            // build http `request`
             let mut new_req = http::Request::builder();
             for header in req.headers {
                 new_req = new_req.header(header.name, header.value);
             }
-            println!("After new req builder");
-            // build the request
+
+            // add to the request
             let mut new_req = new_req
                 .method(req.method.unwrap())
                 .uri(req.path.unwrap())
@@ -195,112 +150,47 @@ fn main() {
                 .body(Vec::new())
                 .unwrap();
 
-            println!("After new request object");
             // add data to the body
             new_req
                 .body_mut()
                 .extend_from_slice(&buffer[parsed.unwrap()..bytes_read]);
 
-            println!("After adding data to request body");
-
             let body = new_req.body().to_vec();
+
+            // TODO: validate the body - must be only URL
             let url = String::from_utf8(body).unwrap();
-            println!("After url parsed: {}", url);
+
+            // build http `request`
+            /////////////////////////////////////////
 
             /////////////////////////////////////////
             // call external api, get json response; build response body
+
+            // TODO: propagate error + code to http response
             let res_with_json = match call_api(url) {
                 Ok(json) => json,
                 Err(err) => {
-                    eprintln!("here: {}", failure::err_msg(err));
+                    eprintln!("Error calling api or json: {}", failure::err_msg(err));
                     break;
                 }
             };
-            println!(
-                "After res_with_json: body: {} content: {:?}",
-                &res_with_json.body().len(),
-                &res_with_json.headers().get("content-length").unwrap()
-            );
-            // http::Response<Vec<Payload>>
             // call external api, get json response; build response body
             /////////////////////////////////////////
 
             /////////////////////////////////////////
             // send back to proxy
+
+            // TODO: propagate error + code to http response
             if let Err(e) =
                 write_res_to_proxy_stream_from_origin(&mut proxy_origin_stream, res_with_json)
             {
                 eprintln!("Error writing to stream: {}", e);
                 break;
-            } else {
-                println!("Writing to proxy - success")
             }
-            println!("After writing to proxy");
             // send back to proxy
             /////////////////////////////////////////
 
             break;
         }
-        // if let Err(err) = parsed_req_result {
-        //     eprintln!("Error parsing request: {:?}", err);
-        //     return;
-        // }
-        // let parsed_req = parsed_req_result.unwrap();
-        // println!(
-        //     "\n IN ORI: parsed_req: {:?}\n\n",
-        //     String::from_utf8(parsed_req.body().to_vec())
-        // );
-        // parsed_req.body()
-
-        // request lines
-        // let req_line = "";
-        // let str_request_line = if let Some(line) = str::from_utf8(&buffer).unwrap().lines().next() {
-        //     line
-        // } else {
-        //     println!("Error parsing request line");
-        //     req_line
-        // };
-        // let req_line = RequestLine::from_str(str_request_line).unwrap();
-
-        // // build the logic to build responses from requests
-        // let html_res_str = build_response(req_line,);
-
-        // println!("res to send: {:?}", html_res_str);
-
-        // connection.write(html_res_str.as_bytes()).unwrap();
     }
 }
-
-// fn build_response(req_line: RequestLine, body: Vec<Payload>) -> String {
-//     let html_res_str: String;
-//     let status: String;
-
-//     println!("len is {}", req_line.get_resource_id().len());
-
-//     let cond_invalid_req = req_line.method() != "GET" || !req_line.path().starts_with("/status");
-//     if cond_invalid_req {
-//         status = format!("Not found");
-//         html_res_str = format!(
-//             "{}\n{}\nContent-Length:{}\n\n{}",
-//             "HTTP/1.1 404 Not Found\n",
-//             "Content-Type: text/html",
-//             status.len(),
-//             status
-//         );
-//     } else {
-//         status = format!(
-//             "{} {}: Exists\n",
-//             "Status for item #",
-//             req_line.get_resource_id()
-//         );
-
-//         html_res_str = format!(
-//             "{} {} {}\n\n{}",
-//             "HTTP/1.1 200 OK\nContent-Type:",
-//             "text/html\nContent-Length:",
-//             status.len(),
-//             status
-//         );
-//     }
-//     html_res_str
-// }
