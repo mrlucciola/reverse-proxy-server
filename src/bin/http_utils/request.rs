@@ -6,31 +6,14 @@ use std::{
     net::TcpStream,
 };
 // local
-use super::response;
+use super::{
+    errors::{RequestError, Result},
+    response::fmt_error,
+};
 
 // constants
 pub const MAX_HEADERS_SIZE: usize = 2_usize.pow(10) * 8; // 1024 * 8 = 8192
-pub const MAX_NUM_HEADERS: usize = 32;
-
-#[derive(Debug)]
-pub enum Error {
-    /// Client hung up before sending a complete request. IncompleteRequest contains the number of
-    /// bytes that were successfully read before the client hung up
-    IncompleteRequest(usize),
-    /// Client sent an invalid HTTP request. httparse::Error contains more details
-    MalformedRequest(httparse::Error),
-    /// The Content-Length header is present, but does not contain a valid numeric value
-    InvalidContentLength,
-    /// The Content-Length header does not match the size of the request body that was sent
-    ContentLengthMismatch,
-    /// The request body is bigger than MAX_BODY_SIZE
-    RequestBodyTooLarge,
-    /// Encountered an I/O error when reading/writing a TcpStream
-    ConnectionError(std::io::Error),
-    /// Cannot handle certain method
-    InvalidMethod,
-    MiscError(response::Error),
-}
+                                                         // pub const MAX_NUM_HEADERS: usize = 32;
 
 /// This function forwards the incoming request to the `origin`.
 ///
@@ -38,7 +21,7 @@ pub enum Error {
 pub fn write_req_to_origin(
     proxy_origin_stream: &mut TcpStream,
     parsed_req: &Request<Vec<u8>>,
-) -> Result<(), std::io::Error> {
+) -> Result<()> {
     println!("2) Forwarding req to origin");
     // build the message to send
     let data_to_forward = format!(
@@ -65,7 +48,7 @@ pub fn write_req_to_origin(
     Ok(())
 }
 
-pub fn get_parsed_request(stream: &mut TcpStream) -> Result<http::Request<Vec<u8>>, Error> {
+pub fn get_parsed_request(stream: &mut TcpStream) -> Result<http::Request<Vec<u8>>> {
     let mut in_buffer = [0_u8; MAX_HEADERS_SIZE];
     let mut bytes_read = 0;
 
@@ -73,11 +56,11 @@ pub fn get_parsed_request(stream: &mut TcpStream) -> Result<http::Request<Vec<u8
         // Read bytes from the connection into the buffer, starting at position bytes_read
         let new_bytes = stream
             .read(&mut in_buffer[bytes_read..])
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .or_else(|err| Err(fmt_error(RequestError::ConnectionError(err), "")))?;
 
         if new_bytes == 0 {
             // We didn't manage to read a complete request
-            return Err(Error::IncompleteRequest(bytes_read));
+            return Err(fmt_error(RequestError::IncompleteRequest(bytes_read), ""));
         }
         bytes_read += new_bytes;
 
@@ -87,7 +70,10 @@ pub fn get_parsed_request(stream: &mut TcpStream) -> Result<http::Request<Vec<u8
         if let Ok(parsed) = req.parse(&in_buffer) {
             // check if the request is incomplete (partial)
             if parsed.is_partial() {
-                return Err(Error::IncompleteRequest(parsed.unwrap()));
+                return Err(fmt_error(
+                    RequestError::IncompleteRequest(parsed.unwrap()),
+                    "",
+                ));
             };
 
             // build proper `request` body
@@ -111,7 +97,3 @@ pub fn get_parsed_request(stream: &mut TcpStream) -> Result<http::Request<Vec<u8
         }
     }
 }
-
-// pub fn check_req_body_len(request: &http::Request<Vec<u8>>) -> Result<usize, Error> {
-//     check_body_len(request.headers())
-// }

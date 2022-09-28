@@ -1,176 +1,137 @@
 // libs
-use chrono::Utc;
-use http::{Request, Response};
-use std::{io::Read, net::TcpStream};
+use http::Response;
+use httparse;
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+};
 // local
-use super::connection::{self, check_body_len};
-// constants
-pub const MAX_NUM_HEADERS: usize = 32;
+pub use super::{
+    connection::check_body_len,
+    errors::{fmt_error, ResponseError, Result},
+};
 
-#[derive(Debug)]
-enum Error {
-    /// Client hung up before sending a complete request
-    IncompleteResponse,
-    /// Client sent an invalid HTTP request. httparse::Error contains more details
-    MalformedResponse(httparse::Error),
-    /// The Content-Length header is present, but does not contain a valid numeric value
-    InvalidContentLength,
-    /// The Content-Length header does not match the size of the request body that was sent
-    ContentLengthMismatch,
-    /// The request body is bigger than MAX_BODY_SIZE
-    ResponseBodyTooLarge,
-    /// The request body is bigger than MAX_BODY_SIZE
-    ResponseBodyError(connection::Error),
-    /// Read response
-    // ReadResponseError(Error),
-    /// Encountered an I/O error when reading/writing a TcpStream
-    ConnectionError(std::io::Error),
+fn check_for_complete_request(res_status: httparse::Status<usize>) -> Option<usize> {
+    if let httparse::Status::Complete(res_len) = res_status {
+        Some(res_len)
+    } else {
+        None
+    }
 }
 
-fn parse_res_from_origin(buffer: &[u8]) -> Result<Option<(http::Response<Vec<u8>>, usize)>, Error> {
+fn parse_res_from_origin(buffer: &[u8]) -> Result<Option<(http::Response<Vec<u8>>, usize)>> {
+    println!("3.0) start: parse_res_from_origin");
     // init headers
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut res_init = httparse::Response::new(&mut headers);
 
+    println!("3.1) parsing response");
     // parse the response into res_init, get status
     let res_status = res_init
         .parse(buffer)
-        .or_else(|err| Err(Error::MalformedResponse(err)))?;
+        .or_else(|err| Err(fmt_error(ResponseError::MalformedResponse(err), "")))?;
 
-    // Ok(Some((resp, 3)))
-    if let httparse::Status::Complete(len) = res_status {
-        let mut res = http::Response::builder()
-            .status(res_init.code.unwrap())
-            .version(http::Version::HTTP_11);
-        for header in res_init.headers {
-            res = res.header(header.name, header.value);
-        }
-        let res = res.body(Vec::new()).unwrap();
-        return Ok(Some((res, len)));
+    println!("3.2) parsed: res_status = {res_status:?}");
+    // if this is a complete request, build and return response
+    let res_len = match check_for_complete_request(res_status) {
+        Some(len) => len,
+        None => return Err(failure::err_msg("Buffer overflow")),
+    };
+
+    println!("3.3) res_len: {res_len}");
+    // init the response builder
+    let mut res = http::Response::builder()
+        .status(res_init.code.unwrap())
+        .version(http::Version::HTTP_11);
+    println!("3.4) res builder: {res:?}");
+
+    // add headers to the response builder
+    for header in res_init.headers {
+        res = res.header(header.name, header.value);
     }
-    Ok(None)
+    println!("3.5) headers: done");
+
+    // init the response body
+    let res: Response<Vec<u8>> = res.body(Vec::new()).unwrap();
+    println!("3.6) response body: built");
+
+    Ok(Some((res, res_len)))
 }
 
-/// Read the response from origin
-pub fn read_res_from_origin(
-    proxy_origin_stream: &mut TcpStream,
-    parsed_req: &Request<Vec<u8>>,
-) -> Result<Response<Vec<u8>>, Error> {
-    // method should only be GET
-    // &http::Method::GET;
-    let res_from_origin =
-        match read_res_from_origin_stream(proxy_origin_stream, &parsed_req.method()) {
-            Ok(res) => res,
-            Err(err) => {
-                eprintln!("Error getting res from orig: {:?}", err);
-                return Err(err);
-            }
-        };
-    Ok(res_from_origin)
-}
-
-pub fn read_res_from_origin_stream(
-    proxy_origin_stream: &mut TcpStream,
-    request_method: &http::Method,
-) -> Result<http::Response<Vec<u8>>, Error> {
-    // let mut response = read_headers(stream)?;
-    let mut res_buffer = [0_u8; 64];
+/// For Proxy: read the response from origin
+pub fn read_res_from_origin(proxy_origin_stream: &mut TcpStream) -> Result<Response<Vec<u8>>> {
+    // init response buffer
+    let mut res_buffer = [0_u8; 2_usize.pow(10) * 8]; // 8 kb buffer
     let mut bytes_read = 0;
 
     loop {
-        // Read bytes from the connection into the buffer, starting at position bytes_read
+        println!("2b.1) reading new bytes - bytes read: {bytes_read}");
+        // read incoming stream and write bytes into the buffer
         let new_bytes = proxy_origin_stream
             .read(&mut res_buffer[bytes_read..])
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
+            .or_else(|err| {
+                Err(fmt_error(
+                    ResponseError::ConnectionError(err),
+                    "Error reading new byes:",
+                ))
+            })?;
 
+        println!("2b.2) handle incomplete respoisen - new bytes: {new_bytes}");
         // handle incomplete response
         if new_bytes == 0 {
-            return Err(Error::IncompleteResponse);
+            println!("2b.2.x) new bytes == 0 - {new_bytes}");
+            break;
         }
         bytes_read += new_bytes;
-
-        // check for valid response
-        let slice = &res_buffer[..bytes_read];
-        if let Some((mut parsed_res, headers_len)) =
-            parse_res_from_origin(&res_buffer[..bytes_read])?
-        {
-            // return the remainder of the response body (without the headers)
-            parsed_res
-                .body_mut()
-                // .extend_from_slice(&res_buffer[headers_len..bytes_read]);
-                .extend_from_slice(&res_buffer[headers_len..bytes_read]);
-
-            // let xxx = parsed_res.extensions();
-
-            // String::from_utf8_lossy(&read_buffer_header) str::from_utf8
-            // A response may have a body as long as it is not responding to a HEAD request and as long as
-            // the response status code is not 1xx, 204 (no content), or 304 (not modified).
-            if !(request_method == http::Method::HEAD
-                || parsed_res.status().as_u16() < 200
-                || parsed_res.status() == http::StatusCode::NO_CONTENT
-                || parsed_res.status() == http::StatusCode::NOT_MODIFIED)
-            {
-                read_res_body(proxy_origin_stream, &mut parsed_res)?;
-            }
-            return Ok(parsed_res);
-        }
-    }
-}
-
-pub fn read_res_body(
-    stream: &mut TcpStream,
-    response: &mut http::Response<Vec<u8>>,
-) -> Result<(), Error> {
-    // The response may or may not supply a Content-Length header. If it provides the header, then
-    // we want to read that number of bytes; if it does not, we want to keep reading bytes until
-    // the connection is closed.
-    let content_len = match check_body_len(response.headers()) {
-        Ok(item) => Ok(item),
-        Err(err) => Err(Error::ResponseBodyError(err)),
-    }?;
-
-    while content_len > 0 || response.body().len() < content_len {
-        let mut buffer = [0_u8; 512];
-        let bytes_read = stream
-            .read(&mut buffer)
-            .or_else(|err| Err(Error::ConnectionError(err)))?;
-        if bytes_read == 0 {
-            // The server has hung up!
-            if content_len == 0 {
-                // We've reached the end of the response
-                break;
-            } else {
-                // Content-Length was set, but the server hung up before we managed to read that
-                // number of bytes
-                return Err(Error::ContentLengthMismatch);
-            }
-        }
-
-        // Make sure the server doesn't send more bytes than it promised to send
-        if content_len > 0 && response.body().len() + bytes_read > content_len {
-            return Err(Error::ContentLengthMismatch);
-        }
-
-        // Make sure server doesn't send more bytes than we allow
-        if response.body().len() + bytes_read > 10000000 {
-            return Err(Error::ResponseBodyTooLarge);
-        }
-
-        // Append received bytes to the response body
-        response.body_mut().extend_from_slice(&buffer[..bytes_read]);
+        println!("2b.3) bytes read = {}", &bytes_read);
     }
 
-    Ok(())
+    // check for valid response
+    let parsed_res_option = parse_res_from_origin(&res_buffer[..bytes_read])?;
+    println!("2b.4.a) parsed_res_option");
+    if let None = parsed_res_option {
+        return Err(failure::err_msg("Incomplete response - returned none"));
+    }
+    println!("2b.4.b) parsed_res_option - no failure!");
+
+    let (mut parsed_res, headers_len) = parsed_res_option.unwrap();
+    println!("2b.5) parsed_res: x  headers_len: {}", headers_len);
+
+    // return the remainder of the response body (without the headers)
+    parsed_res
+        .body_mut()
+        .extend_from_slice(&res_buffer[headers_len..bytes_read]);
+
+    println!("2b.6) parsed_res (after extending): \n{:?}", parsed_res);
+
+    println!("Success: response from origin = read");
+    return Ok(parsed_res);
 }
 
 /// build the response object to send to the client
-pub fn build_response() -> String {
-    let status_line = "HTTP/1.1 200 OK";
-    let contents = Utc::now().to_string();
-    let content_len = contents.len();
-    let response = format!("{status_line}\r\nContent-Length: {content_len}\r\n\r\n{contents}");
-    let mut headers = [httparse::EMPTY_HEADER; MAX_NUM_HEADERS];
-    let checked_res = Response::new(&mut headers);
+pub fn write_response_to_client(
+    stream: &mut TcpStream,
+    res: http::Response<Vec<u8>>,
+) -> Result<()> {
+    let data_to_forward = format!(
+        "{:?} {} {}",
+        res.version(),
+        res.status().as_str(),
+        res.status().canonical_reason().unwrap_or("")
+    );
+    stream.write(&data_to_forward.into_bytes())?;
+    stream.write(b"\r\n")?;
 
-    response
+    for (header_name, header_value) in res.headers() {
+        stream.write(&format!("{}: ", header_name).as_bytes())?;
+        stream.write(header_value.as_bytes())?;
+        stream.write(b"\r\n")?;
+    }
+    stream.write(b"\r\n")?;
+
+    if res.body().len() > 0 {
+        stream.write(res.body())?;
+    }
+
+    Ok(())
 }

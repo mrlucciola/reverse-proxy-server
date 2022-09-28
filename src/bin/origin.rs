@@ -1,62 +1,16 @@
+// imports
 use failure;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    // string::ParseError,
 };
-// use tokio;
 // local
-mod http_utils;
+pub mod http_utils;
 use http_utils::connection::new_endpoint_str;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
-// #[derive(Debug)]
-// pub struct RequestLine {
-//     method: Option<String>,
-//     path: Option<String>,
-// }
-// impl RequestLine {
-//     fn method(&self) -> String {
-//         if let Some(method) = &self.method {
-//             method.to_string()
-//         } else {
-//             String::from("")
-//         }
-//     }
-//     fn path(&self) -> String {
-//         if let Some(path) = &self.path {
-//             path.to_string()
-//         } else {
-//             String::from("")
-//         }
-//     }
-//     fn get_resource_id(&self) -> String {
-//         let path = self.path();
-//         let path_tokens: Vec<String> = path.split("/").map(|line| line.parse().unwrap()).collect();
-//         path_tokens[path_tokens.len() - 1].clone()
-//     }
-// }
-
-// impl FromStr for RequestLine {
-//     type Err = ParseError;
-//     fn from_str(msg: &str) -> std::result::Result<Self, Self::Err> {
-//         let mut msg_tokens = msg.split_ascii_whitespace();
-//         let method = match msg_tokens.next() {
-//             Some(token) => Some(String::from(token)),
-//             None => None,
-//         };
-//         let path = match msg_tokens.next() {
-//             Some(token) => Some(String::from(token)),
-//             None => None,
-//         };
-
-//         Ok(Self { method, path })
-//     }
-// }
-
-// use serde_json
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Payload {
     pub id: String, // "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f 1b60a8ce26f",
@@ -75,62 +29,102 @@ pub struct Payload {
 }
 
 /// Get the payload from the endpoint
+/// convert response to http response
 /// TODO: url must be validated
 /// TODO: url must be supported by already-implemented structs
-fn call_api(url: String) -> Result<Vec<Payload>> {
-    let res = match reqwest::blocking::get(&url) {
-        Ok(r) => r,
-        Err(err) => {
-            println!("no clue: {:?}", err);
-            if err.is_builder() {};
-            return Err(failure::err_msg(err));
-        }
-    };
-    let body = res.text()?;
-    // reqwest::Error::is_builder()
-    let json = serde_json::from_str::<Vec<Payload>>(&body)?;
+// fn call_api(url: String) -> Result<Vec<Payload>> {
+fn call_api(url: String) -> Result<http::Response<Vec<u8>>> {
+    let res = reqwest::blocking::get(&url)?;
 
-    Ok(json)
-}
-
-fn build_res_to_proxy(
-    http_status_code: u16,
-    http_status_text: String,
-    res_status_str: String,
-) -> String {
-    let line1 = format!("HTTP/1.1 {http_status_code} {http_status_text}");
-    let line2 = format!("Content-Type: text/html");
-    let line3 = format!("Content-Length:{}", res_status_str.len());
-    let line4 = format!("{res_status_str}");
-
-    format!("{}\n{}\n{}\n\n{}", line1, line2, line3, line4)
-}
-
-fn handle_connection(
-    proxy_origin_stream: &mut TcpStream,
-    parsed_req: http::Request<Vec<u8>>,
-    json: Vec<Payload>,
-) -> Result<()> {
-    println!("\n\nin handle conn\n\n");
-    // let parsed_req
-    let cond_invalid_method = parsed_req.method() != http::Method::GET;
-    if cond_invalid_method {
-        eprintln!("Please use GET request");
-        let res_str = build_res_to_proxy(400, "Invalid".to_string(), "Invalid request".to_string());
-
-        proxy_origin_stream.write(res_str.as_bytes())?;
-        return Err(failure::err_msg("Please use GET request"));
+    // return to `http` lib response
+    let mut new_res = http::Response::builder()
+        .status(&res.status())
+        .version(http::Version::HTTP_11);
+    for (header_name, header_value) in res.headers() {
+        new_res = new_res.header(header_name, header_value);
     }
-    println!("parsed_req: {:?}", parsed_req);
-    let res_str = build_res_to_proxy(200, "OK".to_string(), "Successful".to_string());
 
-    let stringy = serde_json::to_string(&json)?;
-    proxy_origin_stream.write(res_str.as_bytes())?;
+    let res_body = res.text()?;
+
+    let res_body_json = serde_json::from_str::<Vec<Payload>>(&res_body)?;
+    let res_body_json_str = serde_json::to_string::<Vec<Payload>>(&res_body_json)?;
+    let res_body_json_u8 = res_body_json_str.as_bytes().to_vec();
+
+    let new_res = new_res.body(res_body_json_u8).unwrap();
+
+    Ok(new_res)
+}
+
+// fn build_res_to_proxy(
+//     http_status_code: u16,
+//     http_status_text: String,
+//     res_status_str: String,
+// ) -> String {
+//     let line1 = format!("HTTP/1.1 {http_status_code} {http_status_text}");
+//     let line2 = format!("Content-Type: text/html");
+//     let line3 = format!("Content-Length:{}", res_status_str.len());
+//     let line4 = format!("{res_status_str}");
+
+//     format!("{}\n{}\n{}\n\n{}", line1, line2, line3, line4)
+// }
+
+// fn handle_connection(
+//     proxy_origin_stream: &mut TcpStream,
+//     parsed_req: http::Request<Vec<u8>>,
+//     json: Vec<Payload>,
+// ) -> Result<()> {
+//     println!("\n\nin handle conn\n");
+//     let cond_invalid_method = parsed_req.method() != http::Method::GET;
+//     if cond_invalid_method {
+//         eprintln!("Please use GET request");
+//         let res_str = build_res_to_proxy(400, "Invalid".to_string(), "Invalid request".to_string());
+
+//         proxy_origin_stream.write(res_str.as_bytes())?;
+//         return Err(failure::err_msg("Please use GET request"));
+//     }
+//     println!("parsed_req: {:?}", parsed_req);
+//     let res_str = build_res_to_proxy(200, "OK".to_string(), "Successful".to_string());
+//     println!("res_str: {res_str}");
+
+//     println!("converting json to str...");
+//     let json_str = serde_json::to_string(&json)?;
+//     println!("json_str: \n{json_str}\n");
+//     // add json to the response body
+
+//     // write to the stream
+//     proxy_origin_stream.write(res_str.as_bytes())?;
+
+//     Ok(())
+// }
+
+fn write_res_to_proxy_stream_from_origin(
+    proxy_origin_stream: &mut TcpStream,
+    res: http::Response<Vec<u8>>,
+) -> Result<()> {
+    let data_to_forward = format!(
+        "{:?} {} {}",
+        res.version(),
+        res.status().as_str(),
+        res.status().canonical_reason().unwrap_or("")
+    );
+    proxy_origin_stream.write(&data_to_forward.into_bytes())?;
+    proxy_origin_stream.write(b"\r\n")?;
+
+    for (header_name, header_value) in res.headers() {
+        proxy_origin_stream.write(&format!("{}: ", header_name).as_bytes())?;
+        proxy_origin_stream.write(header_value.as_bytes())?;
+        proxy_origin_stream.write(b"\r\n")?;
+    }
+    proxy_origin_stream.write(b"\r\n")?;
+
+    if res.body().len() > 0 {
+        proxy_origin_stream.write(res.body())?;
+    }
 
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() {
     const ORIG_PORT: u16 = 8080;
     const ORIG_ADDR: &str = "127.0.0.1";
     let origin_endpoint = new_endpoint_str(ORIG_ADDR, ORIG_PORT);
@@ -144,39 +138,56 @@ fn main() -> Result<()> {
 
     // check listener for incoming connections/http requests
     for connection in listener.incoming() {
-        let mut connection = connection.unwrap();
+        let mut proxy_origin_stream = connection.unwrap();
 
+        ///////////////////////////////////////////////////
+        // HANDLE INCOMING CONNECTION (request) FROM PROXY
         // init the buffer
         let mut buffer = [0; 2_usize.pow(9)];
 
         // read to the buffer
-        // connection.read(&mut buffer).unwrap();
+        // proxy_origin_stream.read(&mut buffer).unwrap();
 
-        // let parsed_req_result = get_parsed_request(&mut connection);
+        // let parsed_req_result = get_parsed_request(&mut proxy_origin_stream);
         // let mut in_buffer = [0_u8; MAX_HEADERS_SIZE];
         let mut bytes_read = 0;
 
         loop {
             // check for new bytes
-            let new_bytes = connection.read(&mut buffer[bytes_read..])?;
+            let new_bytes = match proxy_origin_stream.read(&mut buffer[bytes_read..]) {
+                Ok(nb) => nb,
+                Err(err) => {
+                    eprintln!("{:?}", err);
+                    break;
+                }
+            };
             bytes_read += new_bytes;
 
-            // init headers
+            // init req headers
             let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
 
-            let parsed = req.parse(&buffer)?;
+            println!("After init request object");
+            let parsed = match req.parse(&buffer) {
+                Ok(p) => p,
+                Err(err) => {
+                    eprintln!("Error parsing: {:?}", err);
+                    continue;
+                }
+            };
+            println!("After parse check");
             // check if the request is incomplete (partial)
             if parsed.is_partial() {
-                return Err(failure::format_err!("Error: Incomplete request"));
-                // return Err(Box<dyn >);
-                // return Err((""));
+                eprintln!("{}", failure::format_err!("Warning: Partial request"));
             };
+            println!("After partial check");
             // build proper `request` body
             let mut new_req = http::Request::builder();
             for header in req.headers {
                 new_req = new_req.header(header.name, header.value);
             }
+            println!("After new req builder");
+            // build the request
             let mut new_req = new_req
                 .method(req.method.unwrap())
                 .uri(req.path.unwrap())
@@ -184,40 +195,50 @@ fn main() -> Result<()> {
                 .body(Vec::new())
                 .unwrap();
 
+            println!("After new request object");
             // add data to the body
             new_req
                 .body_mut()
                 .extend_from_slice(&buffer[parsed.unwrap()..bytes_read]);
 
-            // return Ok(new_req);
-            // let xxx = new_req.into_body().into_iter();
+            println!("After adding data to request body");
+
             let body = new_req.body().to_vec();
             let url = String::from_utf8(body).unwrap();
+            println!("After url parsed: {}", url);
 
-            // for xyz in xxx {
-            //     println!("str: {:?}", String::from_utf8_lossy(&[xyz]));
-            // }
-            println!("\n IN ORI: parsed_req: {:?}\n\n", url);
-            let json = call_api(url)?;
+            /////////////////////////////////////////
+            // call external api, get json response; build response body
+            let res_with_json = match call_api(url) {
+                Ok(json) => json,
+                Err(err) => {
+                    eprintln!("here: {}", failure::err_msg(err));
+                    break;
+                }
+            };
+            println!(
+                "After res_with_json: body: {} content: {:?}",
+                &res_with_json.body().len(),
+                &res_with_json.headers().get("content-length").unwrap()
+            );
+            // http::Response<Vec<Payload>>
+            // call external api, get json response; build response body
+            /////////////////////////////////////////
 
             /////////////////////////////////////////
             // send back to proxy
+            if let Err(e) =
+                write_res_to_proxy_stream_from_origin(&mut proxy_origin_stream, res_with_json)
+            {
+                eprintln!("Error writing to stream: {}", e);
+                break;
+            } else {
+                println!("Writing to proxy - success")
+            }
+            println!("After writing to proxy");
+            // send back to proxy
+            /////////////////////////////////////////
 
-            // println!("body = {:?}", body);
-
-            // fn build_res(parsed_req: http::Request<Vec<u8>>) -> String {
-            //     let cond_invalid_req = parsed_req.method() != "GET";
-            //     "".to_string()
-            // }
-
-            println!("almost at handle 0 ");
-            let parsed_req = new_req;
-            println!("almost at handle");
-            // let html_res_str = build_res(parsed_req);
-            handle_connection(&mut connection, parsed_req, json)?;
-
-            // write to stream
-            // connection.write(html_res_str.as_bytes()).unwrap();
             break;
         }
         // if let Err(err) = parsed_req_result {
@@ -248,7 +269,6 @@ fn main() -> Result<()> {
 
         // connection.write(html_res_str.as_bytes()).unwrap();
     }
-    Ok(())
 }
 
 // fn build_response(req_line: RequestLine, body: Vec<Payload>) -> String {

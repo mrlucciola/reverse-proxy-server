@@ -1,4 +1,4 @@
 pub mod connection;
-pub mod request;
-pub mod response;
-// pub mod threads;
+mod request;
+mod response;
+pub mod errors;
