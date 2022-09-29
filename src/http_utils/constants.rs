@@ -8,8 +8,8 @@ pub const SIZE_MAX_BODY: usize = 10000000;
 pub const SIZE_MAX_HEADERS: usize = 2_usize.pow(10) * 8; // 1024 * 8 = 8192
 pub const AMT_MAX_HEADERS: usize = 64;
 // main
-pub const ORIG_PORT: u16 = 8080;
-pub const ORIG_ADDR: &str = "127.0.0.1";
+pub const ORIGIN_PORT: u16 = 8080;
+pub const ORIGIN_ADDR: &str = "127.0.0.1";
 pub const PROXY_PORT: u16 = 8081;
 pub const PROXY_ADDR: &str = "127.0.0.1";
 

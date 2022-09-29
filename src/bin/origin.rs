@@ -6,13 +6,10 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 // local
-pub mod cache_utils;
-pub mod http_utils;
-
-use cache_utils::cache::HTTPCache;
-use http_utils::{connection::new_endpoint_str, constants::*};
-
-type Result<T> = std::result::Result<T, failure::Error>;
+use tcp_proxy::http_utils::{
+    constants::*,
+    formatting::{get_origin_addr, Result},
+};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Payload {
@@ -35,7 +32,6 @@ pub struct Payload {
 /// convert response to http response
 /// TODO: url must be validated
 /// TODO: url must be supported by already-implemented structs
-// fn call_api(url: String) -> Result<Vec<Payload>> {
 fn call_api(url: String) -> Result<http::Response<Vec<u8>>> {
     let res = reqwest::blocking::get(&url)?;
 
@@ -49,6 +45,7 @@ fn call_api(url: String) -> Result<http::Response<Vec<u8>>> {
 
     let res_body = res.text()?;
 
+    // validate
     let res_body_json = serde_json::from_str::<Vec<Payload>>(&res_body)?;
     let res_body_json_str = serde_json::to_string::<Vec<Payload>>(&res_body_json)?;
     let res_body_json_u8 = res_body_json_str.as_bytes().to_vec();
@@ -86,10 +83,9 @@ fn write_res_to_proxy_stream_from_origin(
 }
 
 fn main() {
-    let origin_endpoint = new_endpoint_str(ORIG_ADDR, ORIG_PORT);
 
     // create listener
-    let listener = TcpListener::bind(origin_endpoint).unwrap();
+    let listener = TcpListener::bind(get_origin_addr()).unwrap();
     println!(
         "(ORIGIN) Listening at endpoint: {}",
         listener.local_addr().unwrap()

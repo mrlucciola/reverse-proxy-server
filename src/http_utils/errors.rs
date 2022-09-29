@@ -1,3 +1,5 @@
+// TODO: clean up unused errors
+
 pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug)]
@@ -34,8 +36,6 @@ pub enum ResponseError {
     ResponseBodyTooLarge,
     /// The request body is bigger than MAX_BODY_SIZE
     ResponseBodyError(ConnectionError),
-    /// Read response
-    // ReadResponseError(Error),
     /// Encountered an I/O error when reading/writing a TcpStream
     ConnectionError(std::io::Error),
 }

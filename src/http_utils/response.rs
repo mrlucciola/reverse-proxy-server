@@ -103,21 +103,12 @@ pub fn read_res_from_origin(proxy_origin_stream: &mut TcpStream) -> Result<Respo
 /// Response value is mutex because it could be coming from the cache
 /// Lock drop happens when scope closes
 /// TODO: consider- unwrapping mutex before the fxn call
-pub fn write_response_to_client(
+pub fn write_response_to_client<'b>(
     stream: &mut TcpStream,
-    // res: http::Response<Vec<u8>>,
-    res: &mut http::Response<Vec<u8>>,
-    // res: &mut Mutex<http::Response<Vec<u8>>>,
+    res: MutexGuard<Response<Vec<u8>>>,
 ) -> Result<()> {
-    // let res = res
-    //     .get_mut()
-    //     .expect("Poisoned mutex when writing response to client.");
-
     let data_to_forward = format!(
         "{:?} {} {}",
-        // res.version(),
-        // res.status().as_str(),
-        // res.status().canonical_reason().unwrap_or("")
         res.version(),
         res.status().as_str(),
         res.status().canonical_reason().unwrap_or("")
@@ -135,9 +126,6 @@ pub fn write_response_to_client(
     if res.body().len() > 0 {
         stream.write(res.body())?;
     }
-
-    // sanity check, just in case
-    drop(res);
 
     Ok(())
 }

@@ -6,8 +6,10 @@ use std::{
     net::TcpStream,
 };
 // local
-pub use super::{errors::{fmt_error, RequestError, Result}, constants::*};
-
+pub use super::{
+    constants::*,
+    errors::{fmt_error, RequestError, Result},
+};
 
 /// This function forwards the incoming request to the `origin`.
 ///
