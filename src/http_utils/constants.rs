@@ -18,4 +18,5 @@ pub const PROXY_ADDR: &str = "127.0.0.1";
 
 // cache-utils > cache
 pub const CACHE_MAX_ENTRIES: usize = 1000;
-pub const CACHE_TTL_SEC: usize = 30;
+/// needs to be int for date math
+pub const CACHE_TTL_SEC: i64 = 30;

@@ -1,11 +1,6 @@
 // libs
 use http::{HeaderMap, Response};
-use std::{
-    collections::HashMap,
-    io::Write,
-    net::TcpStream,
-    sync::{Arc, Mutex, RwLockWriteGuard},
-};
+use std::{io::Write, net::TcpStream, sync::Arc};
 // local
 use super::{
     constants::*,
@@ -121,6 +116,8 @@ pub fn handle_client_proxy_connection<'a>(
             write_response_to_client(&mut client_proxy_connection, entry_mutex)?;
         }
     };
+    // 2) check cache
+    ////////////////////////////////////////////
 
     Ok(())
 }

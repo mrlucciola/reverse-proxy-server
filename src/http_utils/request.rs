@@ -2,10 +2,7 @@
 use super::connection::write_to_stream;
 use http::Request;
 use httparse;
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-};
+use std::{io::Read, net::TcpStream};
 // local
 pub use super::{
     constants::*,

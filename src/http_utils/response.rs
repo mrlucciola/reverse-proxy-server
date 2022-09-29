@@ -1,5 +1,5 @@
 // libs
-use failure::{self, Fail};
+use failure;
 use http::Response;
 use httparse;
 use serde::{Deserialize, Serialize};
@@ -137,9 +137,6 @@ pub fn write_response_to_client<'b>(
 ///
 /// Function takes the returned error, initiates builds and sends the response
 pub fn write_error_res(err: &failure::Error, stream: &mut TcpStream, err_status: u16) {
-    // failure::err_msg(format!("{err:?}"));
-    // let err = failure::Error::from(err);
-
     ////////////////////////////////////////////////////
     // create the response (below)
     let res = Response::new("");

@@ -7,7 +7,7 @@ use std::{
 };
 // local
 use tcp_proxy::{
-    cache_utils::cache::HTTPCache,
+    cache_utils::{cache::HTTPCache, ttl::purge_expired_cache_entries},
     http_utils::{
         connection::handle_client_proxy_connection,
         formatting::{get_proxy_addr, Result},
@@ -67,6 +67,9 @@ fn main() {
                 }
             };
         });
+
+        // 2) remove entries past the ttl
+        purge_expired_cache_entries(Arc::clone(&cache_arc_rw));
 
         // 3) push handle
         thread_handles.push(handle);
