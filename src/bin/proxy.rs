@@ -60,7 +60,7 @@ fn main() {
             println!("Thread-req from: {:?} {t}", client_proxy_stream.peer_addr());
 
             // handle errors during connection
-            match handle_client_proxy_connection(client_proxy_stream, Arc::clone(&cache)) {
+            match handle_client_proxy_connection(client_proxy_stream, &Arc::clone(&cache)) {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("error handling client connection: {}", e)

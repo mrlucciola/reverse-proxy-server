@@ -6,6 +6,8 @@ Make requests using command `curl "localhost:8081" -d "https://blockstream.info/
 
 ## TODOs
 
+- Add unit tests for all functions, structs and their methods
+- Add integration tests
 - Validation for request body (url) on proxy (and possibly origin)
 - More thorough validation for incoming HTTP requests (specific domains and endpoints)
 - Handle all response error types (propagate to client HTTP response - appropriate HTTP status codes and messages)

@@ -105,8 +105,11 @@ pub fn read_res_from_origin(proxy_origin_stream: &mut TcpStream) -> Result<Respo
 /// TODO: consider- unwrapping mutex before the fxn call
 pub fn write_response_to_client<'b>(
     stream: &mut TcpStream,
-    res: MutexGuard<Response<Vec<u8>>>,
+    res: &Mutex<Response<Vec<u8>>>,
 ) -> Result<()> {
+    let res = res
+        .lock()
+        .expect("Poisoned mutex: writing to client");
     let data_to_forward = format!(
         "{:?} {} {}",
         res.version(),

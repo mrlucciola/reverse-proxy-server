@@ -2,9 +2,10 @@
 use failure;
 use http::Response;
 use std::{
+    collections::HashMap,
     net::TcpStream,
     process::exit,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLockWriteGuard},
 };
 // local
 use super::{
@@ -14,7 +15,7 @@ use super::{
     request::{get_parsed_request, write_req_to_origin},
     response::{read_res_from_origin, write_response_to_client},
 };
-use crate::cache_utils::cache::{CacheWriteLock, HTTPCache};
+use crate::cache_utils::cache::HTTPCache;
 
 pub fn check_body_len(header_map: &http::HeaderMap) -> Result<usize> {
     let header_value = header_map.get("content-length");
@@ -80,9 +81,9 @@ pub fn forward_request_and_return_response(
 /// 3) write back to client
 ///
 /// Handle error responses to client here
-pub fn handle_client_proxy_connection(
+pub fn handle_client_proxy_connection<'a>(
     mut client_proxy_connection: TcpStream,
-    cache: Arc<HTTPCache>,
+    cache: &'a Arc<HTTPCache>,
 ) -> Result<()> {
     ////////////////////////////////////////////
     // 1) parse http request
@@ -97,56 +98,71 @@ pub fn handle_client_proxy_connection(
     // 2) check cache
 
     // return early if we have an entry in the cache
-    let lock_r = cache.lock_read();
     let query_key = String::from_utf8(parsed_req.body().to_vec()).unwrap();
 
+    let lock_r = cache.lock_read();
     match lock_r.get(&query_key) {
         Some(entry_mutex) => {
-            let entry = entry_mutex.lock().expect("Err: getting res from mutex (2)");
-            write_response_to_client(&mut client_proxy_connection, entry)?;
-            return Ok(());
+            // let entry = entry_mutex
+            //     .lock()
+            //     .expect("Poisoned mutex: after getting cache entry");
+            write_response_to_client(&mut client_proxy_connection, entry_mutex)?;
+            drop(lock_r);
         }
         None => {
+            // If the cache didnt return a value-
+            //     0) drop the read lock
+            //     1) query the external source (fwd to origin first)
+            //     2) add to cache
+            //     3) send the http response with payload back to the client
             drop(lock_r);
-            // Insert
-            let lock_w = cache.lock_write();
-            fetch_new_response(parsed_req, lock_w)?;
 
-            return Ok(());
+            // TODO: propagate error to http response
+            println!("cache miss... making request to origin... ");
+            let res_from_origin = forward_request_and_return_response(&parsed_req)?;
+
+            let mut lock_w = cache.lock_write();
+            let entry_mutex = insert_entry_to_cache(parsed_req, res_from_origin, &mut lock_w.guard);
+
+            // Insert
+            // let mut lock_w = cache.lock_write();
+            // let res_mutex = fetch_new_response(parsed_req, &mut lock_w.guard)?;
+
+            // let entry = entry_mutex
+            //     .lock()
+            //     .expect("Poisoned mutex: after fetching response");
+
+            write_response_to_client(&mut client_proxy_connection, entry_mutex)?;
         }
     };
 
     Ok(())
 }
 
-/// If the cache didnt return a value-
-///     1) query the external source (fwd to origin first)
-///     2) add to cache
-///     3) send the http response with payload back to the client
-fn fetch_new_response<'a>(
+fn insert_entry_to_cache<'a>(
     parsed_client_req: http::Request<Vec<u8>>,
-    mut lock_w: CacheWriteLock,
-) -> Result<()> {
-    // TODO: propagate error to http response
-    println!("cache miss... making request to origin... ");
-    let res_from_origin = forward_request_and_return_response(&parsed_client_req)?;
-    println!(
-        "forwarded request, got response: {:?} ",
-        String::from_utf8_lossy(res_from_origin.body())
-    );
-
-    // add to cache
+    res_from_origin: Response<Vec<u8>>,
+    lock_guard: &'a mut RwLockWriteGuard<HashMap<String, Mutex<Response<Vec<u8>>>>>,
+) -> &'a Mutex<Response<Vec<u8>>> {
     let query_key = String::from_utf8(parsed_client_req.body().to_vec())
         .unwrap()
         .clone();
 
-    // TODO: either write to client after `insert` or return mutex
-    new_insert(&mut lock_w, query_key, res_from_origin);
-    // let res_mutex = new_insert(&mut lock_w, query_key, res_from_origin);
-
-    Ok(())
+    let entry_mutex = new_insert(lock_guard, query_key, res_from_origin);
+    entry_mutex
 }
 
-fn new_insert(lock_w: &mut CacheWriteLock, key: String, entry: Response<Vec<u8>>) {
-    lock_w.guard.entry(key).or_insert_with(|| Mutex::new(entry));
+// fn new_insert(lock_w: &mut CacheWriteLock, key: String, entry: Response<Vec<u8>>) -> &mut Mutex<Response<Vec<u8>>> {
+// fn new_insert<'a>(lock_w: &'a mut CacheWriteLock<'a>, key: String, entry: Response<Vec<u8>>) -> &mut Mutex<Response<Vec<u8>>> {
+fn new_insert<'a>(
+    // lock_guard: &'a mut CacheWriteLock<'a>,
+    lock_guard: &'a mut RwLockWriteGuard<HashMap<String, Mutex<Response<Vec<u8>>>>>,
+    key: String,
+    entry: Response<Vec<u8>>,
+) -> &'a mut Mutex<Response<Vec<u8>>> {
+    // ) -> &'a mut Response<Vec<u8>> {
+    let map_entry = lock_guard.entry(key);
+    let inserted_value = map_entry.or_insert_with(|| Mutex::new(entry));
+    // let xxx = inserted_value.get_mut().unwrap();
+    inserted_value
 }
