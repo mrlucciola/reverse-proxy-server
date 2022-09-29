@@ -1,32 +1,17 @@
 // imports
 use failure;
-use serde::{Deserialize, Serialize};
 use std::{
-    io::{Read, Write},
+    io::Read,
     net::{TcpListener, TcpStream},
 };
 // local
 use tcp_proxy::http_utils::{
+    connection::write_to_stream,
     constants::*,
+    errors,
     formatting::{get_origin_addr, Result},
+    response::{write_error_res, Payload},
 };
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct Payload {
-    pub id: String, // "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f 1b60a8ce26f",
-    pub height: u32, // 0,
-    pub version: u32, // 1,
-    pub timestamp: u32, // 1231006505,
-    pub tx_count: u32, // 1,
-    pub size: u32,  // 285,
-    pub weight: u32, // 816,
-    pub merkle_root: String, // "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
-    pub previousblockhash: Option<String>, // null,
-    pub mediantime: u32, // 1231006505,
-    pub nonce: u32, // 2083236893,
-    pub bits: u32,  // 486604799,
-    pub difficulty: u32, // 1,
-}
 
 /// Get the payload from the endpoint
 /// convert response to http response
@@ -55,41 +40,30 @@ fn call_api(url: String) -> Result<http::Response<Vec<u8>>> {
     Ok(new_res)
 }
 
-fn write_res_to_proxy_stream_from_origin(
+// TODO: rename to `write_res_to_proxy_from_origin`
+/// Write the response received from `destination` to `proxy`
+///
+/// Takes the dest. response object and tcp stream
+/// No return value
+fn write_res_to_proxy_from_origin(
     proxy_origin_stream: &mut TcpStream,
     res: http::Response<Vec<u8>>,
 ) -> Result<()> {
-    let data_to_forward = format!(
+    let status_str = format!(
         "{:?} {} {}",
         res.version(),
         res.status().as_str(),
         res.status().canonical_reason().unwrap_or("")
     );
-    proxy_origin_stream.write(&data_to_forward.into_bytes())?;
-    proxy_origin_stream.write(b"\r\n")?;
-
-    for (header_name, header_value) in res.headers() {
-        proxy_origin_stream.write(&format!("{}: ", header_name).as_bytes())?;
-        proxy_origin_stream.write(header_value.as_bytes())?;
-        proxy_origin_stream.write(b"\r\n")?;
-    }
-    proxy_origin_stream.write(b"\r\n")?;
-
-    if res.body().len() > 0 {
-        proxy_origin_stream.write(res.body())?;
-    }
+    write_to_stream(proxy_origin_stream, status_str, res.headers(), res.body())?;
 
     Ok(())
 }
 
 fn main() {
-
     // create listener
     let listener = TcpListener::bind(get_origin_addr()).unwrap();
-    println!(
-        "(ORIGIN) Listening at endpoint: {}",
-        listener.local_addr().unwrap()
-    );
+    println!("Listening at: {}", listener.local_addr().unwrap());
 
     // check listener for incoming connections/http requests
     for connection in listener.incoming() {
@@ -178,10 +152,9 @@ fn main() {
             // send back to proxy
 
             // TODO: propagate error + code to http response
-            if let Err(e) =
-                write_res_to_proxy_stream_from_origin(&mut proxy_origin_stream, res_with_json)
+            if let Err(e) = write_res_to_proxy_from_origin(&mut proxy_origin_stream, res_with_json)
             {
-                eprintln!("Error writing to stream: {}", e);
+                write_error_res(&e, &mut proxy_origin_stream, 400);
                 break;
             }
             // send back to proxy

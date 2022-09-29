@@ -1,5 +1,5 @@
 // imports
-use http::Response;
+use http::{Request, Response};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
@@ -37,16 +37,28 @@ impl<'a> CacheReadLock<'a> {
     }
 }
 impl<'a> CacheWriteLock<'a> {
+    /// Insert an entry into the cache
     pub fn insert(
-        &'a mut self,
-        key: &'a String,
-        entry: MapValue,
-    ) -> &Mutex<http::Response<Vec<u8>>> {
-        let xxx = self
-            .guard
-            .entry(key.to_string())
-            .or_insert_with(|| Mutex::new(entry));
-        xxx
+        lock_guard: &'a mut RwLockWriteGuard<HashMap<String, Mutex<Response<Vec<u8>>>>>,
+        key: String,
+        entry: Response<Vec<u8>>,
+    ) -> &'a mut Mutex<Response<Vec<u8>>> {
+        let map_entry = lock_guard.entry(key);
+        let inserted_value = map_entry.or_insert_with(|| Mutex::new(entry));
+
+        inserted_value
+    }
+
+    /// Simple wrapper for Self::insert
+    pub fn insert_req(
+        lock: &'a mut CacheWriteLock,
+        req: Request<Vec<u8>>,
+        entry: Response<Vec<u8>>,
+    ) -> &'a mut Mutex<Response<Vec<u8>>> {
+        let key = String::from_utf8(req.body().to_vec()).unwrap().clone();
+
+        // insert and return
+        Self::insert(&mut lock.guard, key, entry)
     }
 }
 
@@ -61,9 +73,10 @@ impl HTTPCache {
 
         Self(new_instance)
     }
-    // pub fn clone(&self) -> Self {
-    //     self.clone()
-    // }
+    /// Simple wrapper for clone
+    pub fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
     /// Initialize the lock for writing
     pub fn lock_write(&self) -> CacheWriteLock {
         CacheWriteLock {
@@ -76,10 +89,4 @@ impl HTTPCache {
             guard: self.0.read().expect("Poisoned read lock (RwLock)"),
         }
     }
-
-    // Wrapper - add an entry to the cache (hashmap)
-    // TODO: add validation to key/url in caller and pass in url instead
-    // pub fn add_entry(&self, req: &Request<Vec<u8>>, res: MapValue) -> Result<()> {
-    //     Ok(())
-    // }
 }

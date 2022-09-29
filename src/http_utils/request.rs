@@ -1,4 +1,5 @@
 // libs
+use super::connection::write_to_stream;
 use http::Request;
 use httparse;
 use std::{
@@ -20,30 +21,18 @@ pub fn write_req_to_origin(
     parsed_req: &Request<Vec<u8>>,
 ) -> Result<()> {
     // build the message to send
-    let data_to_forward = format!(
+    let status_str = format!(
         "{} {} {:?}",
         parsed_req.method(),
         parsed_req.uri(),
         parsed_req.version()
     );
-
-    // TODO: propagate error to http response
-    // write to stream
-    proxy_origin_stream.write(&data_to_forward.into_bytes())?;
-    proxy_origin_stream.write(b"\r\n")?;
-
-    // write header to stream
-    for (header_name, header_value) in parsed_req.headers() {
-        proxy_origin_stream.write(&format!("{}: ", header_name).as_bytes())?;
-        proxy_origin_stream.write(header_value.as_bytes())?;
-        proxy_origin_stream.write(b"\r\n")?;
-    }
-    proxy_origin_stream.write(b"\r\n")?;
-
-    // write body to stream
-    if parsed_req.body().len() > 0 {
-        proxy_origin_stream.write(parsed_req.body())?;
-    }
+    write_to_stream(
+        proxy_origin_stream,
+        status_str,
+        parsed_req.headers(),
+        parsed_req.body(),
+    )?;
 
     Ok(())
 }

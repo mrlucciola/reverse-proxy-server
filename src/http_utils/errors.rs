@@ -38,6 +38,8 @@ pub enum ResponseError {
     ResponseBodyError(ConnectionError),
     /// Encountered an I/O error when reading/writing a TcpStream
     ConnectionError(std::io::Error),
+    /// Encountered an I/O error when reading/writing a TcpStream
+    IncorrectResponse,
 }
 
 #[derive(Debug)]

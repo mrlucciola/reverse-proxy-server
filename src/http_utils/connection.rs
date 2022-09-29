@@ -1,10 +1,9 @@
 // libs
-use failure;
-use http::Response;
+use http::{HeaderMap, Response};
 use std::{
     collections::HashMap,
+    io::Write,
     net::TcpStream,
-    process::exit,
     sync::{Arc, Mutex, RwLockWriteGuard},
 };
 // local
@@ -15,7 +14,7 @@ use super::{
     request::{get_parsed_request, write_req_to_origin},
     response::{read_res_from_origin, write_response_to_client},
 };
-use crate::cache_utils::cache::HTTPCache;
+use crate::cache_utils::cache::{CacheWriteLock, HTTPCache};
 
 pub fn check_body_len(header_map: &http::HeaderMap) -> Result<usize> {
     let header_value = header_map.get("content-length");
@@ -27,48 +26,44 @@ pub fn check_body_len(header_map: &http::HeaderMap) -> Result<usize> {
         .get("content-length")
         .unwrap()
         .to_str()
-        .or(Err(failure::err_msg(format!(
-            "{:?}",
-            ConnectionError::InvalidContentLength
-        ))))?
+        .or(Err(fmt_error(ConnectionError::InvalidContentLength, "")))?
         .parse::<usize>()
-        .or(Err(failure::err_msg(format!(
-            "{:?}",
-            ConnectionError::InvalidContentLength
-        ))))?;
+        .or(Err(fmt_error(ConnectionError::InvalidContentLength, "")))?;
 
     if content_body_len > SIZE_MAX_BODY {
-        return Err(failure::err_msg(format!(
-            "{:?}",
-            ConnectionError::BodySizeTooLarge
-        )));
+        return Err(fmt_error(ConnectionError::BodySizeTooLarge, ""));
     }
+
     Ok(content_body_len)
 }
 
-/// Attempt to write to origin
+/// Forward the client request to origin, and return response back to client
+///
+/// 1) Attempt to write to origin
+/// 2) Validate and format the response from [destination > origin > proxy]
 pub fn forward_request_and_return_response(
     parsed_req: &http::Request<Vec<u8>>,
 ) -> Result<Response<Vec<u8>>> {
     let mut proxy_origin_stream = TcpStream::connect(&get_origin_addr())?;
-    // 2.b) write to origin
+    // 1) write to origin
     // TODO: propagate error to client http response
     if let Err(err) = write_req_to_origin(&mut proxy_origin_stream, &parsed_req) {
         return Err(fmt_error(
             RequestError::ConnectionError(err),
-            "Error writing to origin:",
+            "Writing to origin:",
         ));
     };
 
-    // 3) Read from origin
+    // 2.a) Read the response from origin
     let res_from_origin = read_res_from_origin(&mut proxy_origin_stream).or_else(|err| Err(err))?;
 
-    // 3.a) check response, proceed if 200 error code
-    if res_from_origin.status().as_u16() != 200 {
-        return Err(failure::err_msg(format!(
-            "Unsuccessful response: {}",
-            res_from_origin.status().as_u16()
-        )));
+    // 2.b) validate response, proceed if 200 error code
+    let response_status = res_from_origin.status().as_u16();
+    if response_status != 200 {
+        return Err(fmt_error(
+            ResponseError::IncorrectResponse,
+            &response_status.to_string(),
+        ));
     }
 
     Ok(res_from_origin)
@@ -103,9 +98,6 @@ pub fn handle_client_proxy_connection<'a>(
     let lock_r = cache.lock_read();
     match lock_r.get(&query_key) {
         Some(entry_mutex) => {
-            // let entry = entry_mutex
-            //     .lock()
-            //     .expect("Poisoned mutex: after getting cache entry");
             write_response_to_client(&mut client_proxy_connection, entry_mutex)?;
             drop(lock_r);
         }
@@ -121,16 +113,10 @@ pub fn handle_client_proxy_connection<'a>(
             println!("cache miss... making request to origin... ");
             let res_from_origin = forward_request_and_return_response(&parsed_req)?;
 
-            let mut lock_w = cache.lock_write();
-            let entry_mutex = insert_entry_to_cache(parsed_req, res_from_origin, &mut lock_w.guard);
-
             // Insert
-            // let mut lock_w = cache.lock_write();
-            // let res_mutex = fetch_new_response(parsed_req, &mut lock_w.guard)?;
+            let mut lock_w = cache.lock_write();
 
-            // let entry = entry_mutex
-            //     .lock()
-            //     .expect("Poisoned mutex: after fetching response");
+            let entry_mutex = CacheWriteLock::insert_req(&mut lock_w, parsed_req, res_from_origin);
 
             write_response_to_client(&mut client_proxy_connection, entry_mutex)?;
         }
@@ -139,30 +125,33 @@ pub fn handle_client_proxy_connection<'a>(
     Ok(())
 }
 
-fn insert_entry_to_cache<'a>(
-    parsed_client_req: http::Request<Vec<u8>>,
-    res_from_origin: Response<Vec<u8>>,
-    lock_guard: &'a mut RwLockWriteGuard<HashMap<String, Mutex<Response<Vec<u8>>>>>,
-) -> &'a Mutex<Response<Vec<u8>>> {
-    let query_key = String::from_utf8(parsed_client_req.body().to_vec())
-        .unwrap()
-        .clone();
+/// Takes a http response object and writes to a stream
+///
+/// Abstraction that reduces reused code
+/// No return
+pub fn write_to_stream(
+    stream: &mut TcpStream,
+    status_str: String,
+    header_map: &HeaderMap,
+    http_body: &Vec<u8>,
+) -> Result<()> {
+    //res
+    stream.write(&status_str.into_bytes())?;
+    stream.write(b"\r\n")?;
 
-    let entry_mutex = new_insert(lock_guard, query_key, res_from_origin);
-    entry_mutex
-}
+    // TODO: propagate error to http response
+    // write header to stream
+    for (header_name, header_value) in header_map {
+        stream.write(&format!("{}: ", header_name).as_bytes())?;
+        stream.write(header_value.as_bytes())?;
+        stream.write(b"\r\n")?;
+    }
+    stream.write(b"\r\n")?;
 
-// fn new_insert(lock_w: &mut CacheWriteLock, key: String, entry: Response<Vec<u8>>) -> &mut Mutex<Response<Vec<u8>>> {
-// fn new_insert<'a>(lock_w: &'a mut CacheWriteLock<'a>, key: String, entry: Response<Vec<u8>>) -> &mut Mutex<Response<Vec<u8>>> {
-fn new_insert<'a>(
-    // lock_guard: &'a mut CacheWriteLock<'a>,
-    lock_guard: &'a mut RwLockWriteGuard<HashMap<String, Mutex<Response<Vec<u8>>>>>,
-    key: String,
-    entry: Response<Vec<u8>>,
-) -> &'a mut Mutex<Response<Vec<u8>>> {
-    // ) -> &'a mut Response<Vec<u8>> {
-    let map_entry = lock_guard.entry(key);
-    let inserted_value = map_entry.or_insert_with(|| Mutex::new(entry));
-    // let xxx = inserted_value.get_mut().unwrap();
-    inserted_value
+    // write body to stream
+    if http_body.len() > 0 {
+        stream.write(http_body)?;
+    }
+
+    Ok(())
 }

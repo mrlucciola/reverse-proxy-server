@@ -1,18 +1,32 @@
 // libs
-use failure::{self};
+use failure::{self, Fail};
 use http::Response;
 use httparse;
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-    sync::{Mutex, MutexGuard},
-};
+use serde::{Deserialize, Serialize};
+use std::{io::Read, net::TcpStream, sync::Mutex};
 // local
 pub use super::{
-    connection::check_body_len,
+    connection::{check_body_len, write_to_stream},
     constants::*,
     errors::{fmt_error, ResponseError, Result},
 };
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Payload {
+    pub id: String, // "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f 1b60a8ce26f",
+    pub height: u32, // 0,
+    pub version: u32, // 1,
+    pub timestamp: u32, // 1231006505,
+    pub tx_count: u32, // 1,
+    pub size: u32,  // 285,
+    pub weight: u32, // 816,
+    pub merkle_root: String, // "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+    pub previousblockhash: Option<String>, // null,
+    pub mediantime: u32, // 1231006505,
+    pub nonce: u32, // 2083236893,
+    pub bits: u32,  // 486604799,
+    pub difficulty: u32, // 1,
+}
 
 fn check_for_complete_request(res_status: httparse::Status<usize>) -> Option<usize> {
     if let httparse::Status::Complete(res_len) = res_status {
@@ -107,28 +121,41 @@ pub fn write_response_to_client<'b>(
     stream: &mut TcpStream,
     res: &Mutex<Response<Vec<u8>>>,
 ) -> Result<()> {
-    let res = res
-        .lock()
-        .expect("Poisoned mutex: writing to client");
-    let data_to_forward = format!(
+    let res = res.lock().expect("Poisoned mutex: writing to client");
+    let status_str = format!(
         "{:?} {} {}",
         res.version(),
         res.status().as_str(),
         res.status().canonical_reason().unwrap_or("")
     );
-    stream.write(&data_to_forward.into_bytes())?;
-    stream.write(b"\r\n")?;
-
-    for (header_name, header_value) in res.headers() {
-        stream.write(&format!("{}: ", header_name).as_bytes())?;
-        stream.write(header_value.as_bytes())?;
-        stream.write(b"\r\n")?;
-    }
-    stream.write(b"\r\n")?;
-
-    if res.body().len() > 0 {
-        stream.write(res.body())?;
-    }
+    write_to_stream(stream, status_str, res.headers(), res.body())?;
 
     Ok(())
+}
+
+/// PLACEHOLDER - Does not do anything
+///
+/// Function takes the returned error, initiates builds and sends the response
+pub fn write_error_res(err: &failure::Error, stream: &mut TcpStream, err_status: u16) {
+    // failure::err_msg(format!("{err:?}"));
+    // let err = failure::Error::from(err);
+
+    ////////////////////////////////////////////////////
+    // create the response (below)
+    let res = Response::new("");
+    let builder = Response::builder()
+        .status(err_status)
+        .version(http::Version::HTTP_11);
+    // create the response (above)
+    ////////////////////////////////////////////////////
+
+    let status_str = String::from("");
+    let status_str = format!(
+        "{:?} {} {}",
+        res.version(),
+        res.status().as_str(),
+        res.status().canonical_reason().unwrap_or("")
+    );
+
+    // write_to_stream(stream, status_str, header_map, http_body);
 }
