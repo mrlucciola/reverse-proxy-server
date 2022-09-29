@@ -20,7 +20,7 @@ pub type Cache = HashMap<String, Mutex<MapValue>>;
 /// Cache = HashMap<String, Mutex<MapValue>>\
 /// MapValue = Response<Vec<u8>>
 ///
-/// Arc<RwLock<HashMap<String, Mutex<Response< Vec<u8\> \>\>\>\>\>
+/// Arc<RwLock<HashMap<String, Mutex<Response<\Vec<u8\> \>\>\>\>\>
 pub struct HTTPCache(Arc<RwLock<Cache>>);
 /// Instance of read lock for the cache
 pub struct CacheReadLock<'a> {

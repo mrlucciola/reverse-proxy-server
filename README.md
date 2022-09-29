@@ -4,9 +4,6 @@ Start the reverse-proxy server with `cargo run --bin proxy`
 
 Make requests using command `curl "localhost:8081" -d "https://blockstream.info/api/blocks/0" -X GET`
 
-In its current state, the system does not return responses:
-Currently in the process of updating from single-threaded to multi-threaded.
-
 ## TODOs
 
 - Validation for request body (url) on proxy (and possibly origin)
@@ -16,7 +13,6 @@ Currently in the process of updating from single-threaded to multi-threaded.
 - Refactor code to be more modular
 - Refactor code to be more readable
 - Add descriptions to all structs, functions and methods
-- Fix cache management
 - Restrict requests to specific sites and endpoints, create a payload body struct for each supported API call
 
 ## TTL implementation

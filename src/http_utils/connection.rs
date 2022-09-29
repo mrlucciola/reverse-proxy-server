@@ -48,11 +48,11 @@ pub fn check_body_len(header_map: &http::HeaderMap) -> Result<usize> {
 /// Attempt to write to origin
 pub fn forward_request_and_return_response(
     parsed_req: &http::Request<Vec<u8>>,
-    proxy_origin_stream: &mut TcpStream,
 ) -> Result<Response<Vec<u8>>> {
+    let mut proxy_origin_stream = TcpStream::connect(&get_origin_addr())?;
     // 2.b) write to origin
     // TODO: propagate error to client http response
-    if let Err(err) = write_req_to_origin(proxy_origin_stream, &parsed_req) {
+    if let Err(err) = write_req_to_origin(&mut proxy_origin_stream, &parsed_req) {
         return Err(fmt_error(
             RequestError::ConnectionError(err),
             "Error writing to origin:",
@@ -60,7 +60,7 @@ pub fn forward_request_and_return_response(
     };
 
     // 3) Read from origin
-    let res_from_origin = read_res_from_origin(proxy_origin_stream).or_else(|err| Err(err))?;
+    let res_from_origin = read_res_from_origin(&mut proxy_origin_stream).or_else(|err| Err(err))?;
 
     // 3.a) check response, proceed if 200 error code
     if res_from_origin.status().as_u16() != 200 {
@@ -93,16 +93,9 @@ pub fn handle_client_proxy_connection(
     // 1) parse http request
     ////////////////////////////////////////////
 
-    let mut proxy_origin_stream = match TcpStream::connect(&get_origin_addr()) {
-        Ok(conn) => conn,
-        Err(err) => {
-            eprintln!("Error: Please re-start the origin server {}", err);
-            exit(1);
-        }
-    };
-
     ////////////////////////////////////////////
     // 2) check cache
+
     // return early if we have an entry in the cache
     let lock_r = cache.lock_read();
     let query_key = String::from_utf8(parsed_req.body().to_vec()).unwrap();
@@ -117,11 +110,13 @@ pub fn handle_client_proxy_connection(
             drop(lock_r);
             // Insert
             let lock_w = cache.lock_write();
-            fetch_new_response(parsed_req, &mut proxy_origin_stream, lock_w)?;
+            fetch_new_response(parsed_req, lock_w)?;
 
             return Ok(());
         }
-    }
+    };
+
+    Ok(())
 }
 
 /// If the cache didnt return a value-
@@ -130,13 +125,11 @@ pub fn handle_client_proxy_connection(
 ///     3) send the http response with payload back to the client
 fn fetch_new_response<'a>(
     parsed_client_req: http::Request<Vec<u8>>,
-    proxy_origin_stream: &mut TcpStream,
     mut lock_w: CacheWriteLock,
 ) -> Result<()> {
     // TODO: propagate error to http response
     println!("cache miss... making request to origin... ");
-    let res_from_origin =
-        forward_request_and_return_response(&parsed_client_req, proxy_origin_stream)?;
+    let res_from_origin = forward_request_and_return_response(&parsed_client_req)?;
     println!(
         "forwarded request, got response: {:?} ",
         String::from_utf8_lossy(res_from_origin.body())

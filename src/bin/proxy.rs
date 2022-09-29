@@ -7,11 +7,9 @@ use std::{
 };
 // local
 use tcp_proxy::{
-    cache_utils::cache::{Cache, HTTPCache},
+    cache_utils::cache::HTTPCache,
     http_utils::{
-        connection::{handle_client_proxy_connection},
-        constants::*,
-        errors::*,
+        connection::handle_client_proxy_connection,
         formatting::{get_proxy_addr, Result},
     },
 };
@@ -27,9 +25,7 @@ fn write_error_response_to_client(e: failure::Error) -> Result<()> {
 fn main() {
     let proxy_listener = match TcpListener::bind(&get_proxy_addr()) {
         Ok(pl) => {
-            let port = pl.local_addr().unwrap().port();
-            let addr = pl.local_addr().unwrap().ip();
-            println!("Running at endpoint: {addr}:{port} {:?}", pl.local_addr());
+            println!("Running at endpoint: {}", pl.local_addr().unwrap());
 
             pl
         }
@@ -49,6 +45,8 @@ fn main() {
     for client_connection in proxy_listener.incoming() {
         println!("\nIncoming request: ");
         let cache = Arc::clone(&cache_arc_rw);
+
+        // init the stream
         let client_proxy_stream = match client_connection {
             Ok(s) => s,
             Err(e) => {
@@ -62,17 +60,15 @@ fn main() {
             println!("Thread-req from: {:?} {t}", client_proxy_stream.peer_addr());
 
             // handle errors during connection
-            // TODO
-            match handle_client_proxy_connection(client_proxy_stream, cache) {
+            match handle_client_proxy_connection(client_proxy_stream, Arc::clone(&cache)) {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("error handling client connection: {}", e)
                 }
             };
-
-            // handle the connection -
         });
 
+        // 3) push handle
         thread_handles.push(handle);
 
         println!("\n\nEnd of connection\n");
